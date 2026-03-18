@@ -10,7 +10,6 @@ from tempfile import NamedTemporaryFile
 
 # ================= CONFIG FILE =================
 CHANNELS_FILE = Path("channels.json")
-
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "600"))
 
 AUDIO_DIR = Path("audio")
@@ -68,8 +67,9 @@ def get_videos():
 
     for channel in channels:
         try:
+            # CHANGED: Added "--playlist-end", "2" to limit the fetch
             result = subprocess.run(
-                ["yt-dlp", "--flat-playlist", "-J", channel],
+                ["yt-dlp", "--flat-playlist", "--playlist-end", "2", "-J", channel],
                 capture_output=True,
                 text=True,
                 timeout=60
@@ -180,7 +180,6 @@ while not STOP:
 
         backoff = min(3600, backoff * 2 + 5)
         logging.info(f"Backing off {backoff}s")
-
         time.sleep(backoff)
 
 logging.info("Saving before exit...")
