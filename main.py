@@ -7,7 +7,7 @@ import subprocess
 import random
 from pathlib import Path
 
-# --- [BOOT] TALK IMMEDIATELY ---
+# --- [BOOT] IMMEDIATE LOGGING ---
 print("--- [BOOT] SCRIPT IS RUNNING ---", flush=True)
 
 # --- [CREDENTIALS] ---
@@ -38,6 +38,11 @@ def run_scout():
 
     while True:
         try:
+            # 1. Check for the Manual Force Variable in Railway Settings
+            force_all = os.getenv("FORCE_ALL", "False").lower() == "true"
+            if force_all:
+                print("--- [OVERRIDE] FORCE_ALL IS ENABLED: DOWNLOADING EVERYTHING ---", flush=True)
+
             if not CHANNELS_FILE.exists():
                 print("--- [ERROR] channels.json MISSING ---", flush=True)
                 time.sleep(60)
@@ -65,11 +70,17 @@ def run_scout():
                 
                 vid = res.stdout.strip()
 
-                if vid and vid not in processed:
-                    print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
+                # LOGIC: Download if it's new OR if Force_All is enabled
+                if vid and (vid not in processed or force_all):
+                    if force_all:
+                        print(f"--- [FORCE] DOWNLOADING: {vid} (Ignoring history) ---", flush=True)
+                    else:
+                        print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                     
                     output = str(AUDIO_DIR / "audio.wav")
-                    for f in AUDIO_DIR.glob("*"): os.remove(f)
+                    for f in AUDIO_DIR.glob("*"): 
+                        try: os.remove(f)
+                        except: pass
 
                     # BROWSER SPOOFING COMMAND
                     dl_cmd = [
@@ -86,17 +97,20 @@ def run_scout():
                         print(f"--- [UPLOAD] PUSHING {vid} TO KAGGLE ---", flush=True)
                         api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                         
-                        processed.append(vid)
-                        with open(PROCESSED_FILE, "w") as f:
-                            json.dump(processed, f)
+                        # Only save to processed list if we aren't in force mode
+                        if not force_all:
+                            processed.append(vid)
+                            with open(PROCESSED_FILE, "w") as f:
+                                json.dump(processed, f)
+                        
                         print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
                     
-                    # Random delay to prevent YouTube from flagging us again
-                    delay = random.randint(30, 90)
-                    print(f"Throttling: Waiting {delay}s before next video...", flush=True)
+                    # Prevent YouTube from getting suspicious
+                    delay = random.randint(20, 45)
+                    print(f"Throttling: Waiting {delay}s...", flush=True)
                     time.sleep(delay)
                 else:
-                    print(f"--- [SKIP] {vid} NO NEW CONTENT ---", flush=True)
+                    print(f"--- [SKIP] {vid} ALREADY PROCESSED ---", flush=True)
 
             print("--- [SLEEP] CYCLE FINISHED. WAITING 4 HOURS ---", flush=True)
             time.sleep(14400)
