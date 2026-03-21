@@ -40,9 +40,7 @@ def run_scout():
         try:
             # 1. Check for the Manual Force Variable in Railway Settings
             force_all = os.getenv("FORCE_ALL", "False").lower() == "true"
-            if force_all:
-                print("--- [OVERRIDE] FORCE_ALL IS ENABLED: DOWNLOADING EVERYTHING ---", flush=True)
-
+            
             if not CHANNELS_FILE.exists():
                 print("--- [ERROR] channels.json MISSING ---", flush=True)
                 time.sleep(60)
@@ -56,7 +54,8 @@ def run_scout():
                 try:
                     with open(PROCESSED_FILE) as f:
                         processed = json.load(f)
-                except: processed = []
+                except: 
+                    processed = []
 
             for channel in channels:
                 print(f"--- [SCAN] CHECKING: {channel} ---", flush=True)
@@ -70,14 +69,15 @@ def run_scout():
                 
                 vid = res.stdout.strip()
 
-                # LOGIC: Download if it's new OR if Force_All is enabled
-                if vid and (vid not in processed or force_all):
+                # --- FIX: FORCE_ALL NOW TAKES PRIORITY ---
+                if vid and (force_all or vid not in processed):
                     if force_all:
                         print(f"--- [FORCE] DOWNLOADING: {vid} (Ignoring history) ---", flush=True)
                     else:
                         print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                     
                     output = str(AUDIO_DIR / "audio.wav")
+                    # Clean up old audio files
                     for f in AUDIO_DIR.glob("*"): 
                         try: os.remove(f)
                         except: pass
@@ -93,19 +93,24 @@ def run_scout():
                         f"https://youtube.com/watch?v={vid}"
                     ]
                     
-                    if subprocess.run(dl_cmd).returncode == 0:
+                    download_result = subprocess.run(dl_cmd)
+                    
+                    if download_result.returncode == 0:
                         print(f"--- [UPLOAD] PUSHING {vid} TO KAGGLE ---", flush=True)
                         api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                         
                         # Only save to processed list if we aren't in force mode
+                        # This keeps 'force' mode available for testing anytime
                         if not force_all:
                             processed.append(vid)
                             with open(PROCESSED_FILE, "w") as f:
                                 json.dump(processed, f)
                         
                         print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
+                    else:
+                        print(f"--- [ERROR] DOWNLOAD FAILED FOR {vid} ---", flush=True)
                     
-                    # Prevent YouTube from getting suspicious
+                    # Delay to prevent YouTube IP bans
                     delay = random.randint(20, 45)
                     print(f"Throttling: Waiting {delay}s...", flush=True)
                     time.sleep(delay)
