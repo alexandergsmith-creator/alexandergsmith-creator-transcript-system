@@ -22,6 +22,7 @@ except Exception as e:
 
 KAGGLE_DATASET = "alexandergordonsmith/youtube-jobs"
 CHANNELS_FILE = Path("channels.json")
+COOKIES_FILE = Path("cookies.txt")
 AUDIO_DIR = Path("audio")
 AUDIO_DIR.mkdir(exist_ok=True)
 
@@ -39,17 +40,17 @@ def run_scout():
             for channel in channels:
                 print(f"--- [SCAN] CHECKING: {channel} ---", flush=True)
                 
-                res = subprocess.run([
-                    "yt-dlp", "--get-id", "--playlist-end", "1", 
-                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                    channel
-                ], capture_output=True, text=True)
+                # Using Cookies to get the ID
+                id_cmd = ["yt-dlp", "--get-id", "--playlist-end", "1"]
+                if COOKIES_FILE.exists():
+                    id_cmd.extend(["--cookies", str(COOKIES_FILE)])
                 
+                id_cmd.append(channel)
+                res = subprocess.run(id_cmd, capture_output=True, text=True)
                 vid = res.stdout.strip()
 
                 if vid:
                     print(f"--- [FORCE] DOWNLOADING: {vid} ---", flush=True)
-                    
                     output = str(AUDIO_DIR / "audio.wav")
                     for f in AUDIO_DIR.glob("*"):
                         try: os.remove(f)
@@ -57,18 +58,23 @@ def run_scout():
 
                     dl_cmd = [
                         "yt-dlp", "-x", "--audio-format", "wav", 
-                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                         "--no-check-certificate", "--geo-bypass",
-                        "-o", output, 
-                        f"https://youtube.com/watch?v={vid}"
+                        "-o", output
                     ]
+                    if COOKIES_FILE.exists():
+                        dl_cmd.extend(["--cookies", str(COOKIES_FILE)])
+                    
+                    dl_cmd.append(f"https://youtube.com/watch?v={vid}")
                     
                     if subprocess.run(dl_cmd).returncode == 0:
                         print(f"--- [UPLOAD] PUSHING {vid} TO KAGGLE ---", flush=True)
                         api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                         print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
-                    
-                    time.sleep(random.randint(20, 45))
+                else:
+                    print(f"--- [ERROR] COULD NOT GET VIDEO ID. CHECK COOKIES. ---", flush=True)
+                    print(f"DEBUG LOG: {res.stderr}", flush=True)
+                
+                time.sleep(random.randint(10, 20))
 
             print("--- [SLEEP] CYCLE FINISHED. WAITING 4 HOURS ---", flush=True)
             time.sleep(14400)
