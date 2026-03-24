@@ -1,5 +1,5 @@
-static-ffmpeg
-yt-dlp[default]
+yt-dlp
 yt-dlp-plugins
 kaggle
 requests
+static-ffmpeg
