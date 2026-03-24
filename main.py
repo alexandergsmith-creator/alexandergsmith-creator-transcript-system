@@ -5,6 +5,7 @@ import time
 import json
 import subprocess
 import random
+import re
 from pathlib import Path
 
 os.environ['KAGGLE_USERNAME'] = "alexandergordonsmith"
@@ -39,22 +40,15 @@ def run_scout():
                 channels = json.load(f)
 
             for chan_id in channels:
-                search_url = f"https://www.youtube.com/channel/{chan_id}/videos"
-                print(f"--- [SCAN] CHECKING ID: {chan_id} ---", flush=True)
+                # Use the RSS Feed URL - Much harder for YT to block
+                rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={chan_id}"
+                print(f"--- [SCAN] CHECKING RSS FOR: {chan_id} ---", flush=True)
                 
-                # We add --javascript-delay and force the player client
-                base_args = [
-                    "--no-check-certificate", 
-                    "--extractor-args", "youtube:player_client=web",
-                    "--allow-unplayable-formats",
-                    "--javascript-delay", "5"
+                # Extract the first Video ID from the RSS feed using yt-dlp
+                id_cmd = [
+                    "yt-dlp", "--get-id", "--playlist-end", "1", 
+                    "--no-check-certificate", rss_url
                 ]
-                
-                if COOKIES_FILE.exists():
-                    base_args.extend(["--cookies", str(COOKIES_FILE)])
-
-                # 1. Get Video ID
-                id_cmd = ["yt-dlp"] + base_args + ["--flat-playlist", "--print", "id", "--playlist-items", "1", search_url]
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
                 vid = res.stdout.strip().split('\n')[0]
 
@@ -65,17 +59,21 @@ def run_scout():
                         print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                         output = str(AUDIO_DIR / "audio.wav")
                         
-                        # 2. Download - added 'bestaudio' fallback to ensure it finds a stream
-                        dl_cmd = ["yt-dlp"] + base_args + [
-                            "-x", "--audio-format", "wav",
-                            "-f", "bestaudio/ba/worst", # Tries best, then any audio, then worst
-                            "-o", output, 
-                            f"https://youtube.com/watch?v={vid}"
+                        # Use cookies and web player client for the actual download
+                        dl_cmd = [
+                            "yt-dlp", "-x", "--audio-format", "wav",
+                            "--no-check-certificate",
+                            "--extractor-args", "youtube:player_client=web",
+                            "-f", "bestaudio/ba/worst",
+                            "-o", output
                         ]
                         
-                        result = subprocess.run(dl_cmd)
+                        if COOKIES_FILE.exists():
+                            dl_cmd.extend(["--cookies", str(COOKIES_FILE)])
                         
-                        if result.returncode == 0:
+                        dl_cmd.append(f"https://youtube.com/watch?v={vid}")
+                        
+                        if subprocess.run(dl_cmd).returncode == 0:
                             print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
                             api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                             
@@ -84,12 +82,10 @@ def run_scout():
                                 with open(PROCESSED_FILE, "w") as f:
                                     json.dump(processed, f)
                             print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
-                        else:
-                            print(f"--- [ERROR] DOWNLOAD FAILED FOR {vid} ---", flush=True)
                 else:
-                    print(f"--- [SKIP] No valid ID found for {chan_id} ---", flush=True)
+                    print(f"--- [SKIP] No ID found in RSS for {chan_id} ---", flush=True)
                 
-                time.sleep(random.randint(10, 20))
+                time.sleep(random.randint(15, 30))
 
             print("--- [SLEEP] CYCLE FINISHED ---", flush=True)
             time.sleep(14400)
