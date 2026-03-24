@@ -42,7 +42,6 @@ def run_scout():
                 rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={chan_id}"
                 print(f"--- [SCAN] CHECKING RSS FOR: {chan_id} ---", flush=True)
                 
-                # Get ID from RSS
                 id_cmd = ["yt-dlp", "--get-id", "--playlist-end", "1", "--no-check-certificate", rss_url]
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
                 vid = res.stdout.strip().split('\n')[0]
@@ -54,26 +53,21 @@ def run_scout():
                         print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                         output = str(AUDIO_DIR / "audio.wav")
                         
-                        # --- THE FIX IS HERE ---
-                        # We use 'mweb' (mobile web) which often has simpler challenges than 'web'
+                        # Use the Android/iOS clients to bypass the JavaScript challenge
                         dl_cmd = [
                             "yt-dlp",
                             "-x", "--audio-format", "wav",
                             "--no-check-certificate",
-                            "--extractor-args", "youtube:player_client=mweb,web", 
-                            "-f", "ba/worst", # Just get any audio that works
-                            "-o", output
+                            "--extractor-args", "youtube:player_client=android,ios", 
+                            "-f", "ba/worst",
+                            "-o", output,
+                            f"https://youtube.com/watch?v={vid}"
                         ]
                         
                         if COOKIES_FILE.exists():
                             dl_cmd.extend(["--cookies", str(COOKIES_FILE)])
                         
-                        dl_cmd.append(f"https://youtube.com/watch?v={vid}")
-                        
-                        # Run download
-                        result = subprocess.run(dl_cmd)
-                        
-                        if result.returncode == 0:
+                        if subprocess.run(dl_cmd).returncode == 0:
                             print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
                             api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                             
