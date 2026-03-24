@@ -43,22 +43,22 @@ def run_scout():
             for channel in channels:
                 print(f"--- [SCAN] CHECKING: {channel} ---", flush=True)
                 
-                # Setup arguments for the JavaScript solver
-                base_args = ["--no-check-certificate", "--extractor-args", "youtube:player_client=web"]
-                
+                # Base args for yt-dlp
+                base_args = ["--no-check-certificate", "--extractor-args", "youtube:player_client=web", "--quiet", "--no-warnings"]
                 if COOKIES_FILE.exists():
                     base_args.extend(["--cookies", str(COOKIES_FILE)])
 
-                # Get Video ID
-                id_cmd = ["yt-dlp"] + base_args + ["--get-id", "--playlist-end", "1", channel]
+                # Get Video ID - specifically looking for the latest video
+                id_cmd = ["yt-dlp"] + base_args + ["--get-id", "--playlist-end", "1", f"{channel}/videos"]
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
                 vid = res.stdout.strip()
+
+                print(f"DEBUG: Found Video ID: '{vid}'", flush=True)
 
                 if vid and (vid not in processed or os.getenv('FORCE_ALL') == 'True'):
                     print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                     output = str(AUDIO_DIR / "audio.wav")
                     
-                    # Force basic audio format to ensure success
                     dl_cmd = ["yt-dlp"] + base_args + [
                         "-x", "--audio-format", "wav",
                         "-f", "ba/worst", 
@@ -68,7 +68,6 @@ def run_scout():
                     
                     if subprocess.run(dl_cmd).returncode == 0:
                         print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
-                        # Create version on Kaggle
                         api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                         
                         if vid not in processed:
@@ -77,9 +76,10 @@ def run_scout():
                                 json.dump(processed, f)
                         print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
                 else:
-                    print(f"--- [SKIP] {vid} already handled or not found ---", flush=True)
+                    reason = "Already processed" if vid in processed else "No ID found"
+                    print(f"--- [SKIP] {vid} ({reason}) ---", flush=True)
                 
-                time.sleep(random.randint(20, 45))
+                time.sleep(random.randint(5, 10))
 
             print("--- [SLEEP] CYCLE FINISHED ---", flush=True)
             time.sleep(14400)
