@@ -7,78 +7,84 @@ import subprocess
 import random
 from pathlib import Path
 
-print("--- [BOOT] SCRIPT IS RUNNING ---", flush=True)
-
+# --- [CREDENTIALS] ---
 os.environ['KAGGLE_USERNAME'] = "alexandergordonsmith"
 os.environ['KAGGLE_KEY'] = "153ff4001bd116d721e522e19255d204"
 
 try:
-    print("--- [BOOT] LOADING LIBRARIES... ---", flush=True)
     from kaggle.api.kaggle_api_extended import KaggleApi
     print("--- [BOOT] LIBRARIES LOADED ---", flush=True)
 except Exception as e:
     print(f"--- [CRASH] IMPORT ERROR: {e} ---", flush=True)
     sys.exit(1)
 
-KAGGLE_DATASET = "alexandergordonsmith/youtube-jobs"
+# --- [CONFIG] ---
 CHANNELS_FILE = Path("channels.json")
+PROCESSED_FILE = Path("processed.json")
 COOKIES_FILE = Path("cookies.txt")
 AUDIO_DIR = Path("audio")
 AUDIO_DIR.mkdir(exist_ok=True)
 
 def run_scout():
-    print("--- [AUTH] CONNECTING TO KAGGLE ---", flush=True)
     api = KaggleApi()
     api.authenticate()
     print("--- [AUTH] SUCCESS ---", flush=True)
 
     while True:
         try:
+            processed = []
+            if PROCESSED_FILE.exists():
+                with open(PROCESSED_FILE) as f:
+                    processed = json.load(f)
+
             with open(CHANNELS_FILE) as f:
                 channels = json.load(f)
 
             for channel in channels:
                 print(f"--- [SCAN] CHECKING: {channel} ---", flush=True)
                 
-                # Using Cookies to get the ID
-                id_cmd = ["yt-dlp", "--get-id", "--playlist-end", "1"]
-                if COOKIES_FILE.exists():
-                    id_cmd.extend(["--cookies", str(COOKIES_FILE)])
-                
-                id_cmd.append(channel)
+                # These flags tell yt-dlp to use the JavaScript engine (Node.js) 
+                # and the web player to bypass the 'n challenge'
+                base_args = [
+                    "--cookies", str(COOKIES_FILE),
+                    "--no-check-certificate",
+                    "--extractor-args", "youtube:player_client=web",
+                    "--allow-unplayable-formats"
+                ]
+
+                # Get Video ID
+                id_cmd = ["yt-dlp"] + base_args + ["--get-id", "--playlist-end", "1", channel]
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
                 vid = res.stdout.strip()
 
-                if vid:
-                    print(f"--- [FORCE] DOWNLOADING: {vid} ---", flush=True)
+                if vid and (vid not in processed or os.getenv('FORCE_ALL') == 'True'):
+                    print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                     output = str(AUDIO_DIR / "audio.wav")
-                    for f in AUDIO_DIR.glob("*"):
-                        try: os.remove(f)
-                        except: pass
-
-                    dl_cmd = [
-                        "yt-dlp", "-x", "--audio-format", "wav", 
-                        "--no-check-certificate", "--geo-bypass",
-                        "-o", output
-                    ]
-                    if COOKIES_FILE.exists():
-                        dl_cmd.extend(["--cookies", str(COOKIES_FILE)])
                     
-                    dl_cmd.append(f"https://youtube.com/watch?v={vid}")
+                    # Force basic format to avoid high-encryption blocks
+                    dl_cmd = ["yt-dlp"] + base_args + [
+                        "-x", "--audio-format", "wav",
+                        "-f", "ba/worst", 
+                        "-o", output, 
+                        f"https://youtube.com/watch?v={vid}"
+                    ]
                     
                     if subprocess.run(dl_cmd).returncode == 0:
-                        print(f"--- [UPLOAD] PUSHING {vid} TO KAGGLE ---", flush=True)
+                        print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
                         api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
+                        
+                        if vid not in processed:
+                            processed.append(vid)
+                            with open(PROCESSED_FILE, "w") as f:
+                                json.dump(processed, f)
                         print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
                 else:
-                    print(f"--- [ERROR] COULD NOT GET VIDEO ID. CHECK COOKIES. ---", flush=True)
-                    print(f"DEBUG LOG: {res.stderr}", flush=True)
+                    print(f"--- [SKIP/FAIL] {vid} check logs ---", flush=True)
                 
-                time.sleep(random.randint(10, 20))
+                time.sleep(random.randint(20, 45))
 
-            print("--- [SLEEP] CYCLE FINISHED. WAITING 4 HOURS ---", flush=True)
+            print("--- [SLEEP] CYCLE FINISHED ---", flush=True)
             time.sleep(14400)
-
         except Exception as e:
             print(f"--- [LOOP ERROR] {e} ---", flush=True)
             time.sleep(60)
