@@ -39,43 +39,43 @@ def run_scout():
                 channels = json.load(f)
 
             for chan_id in channels:
-                # Construct the direct URL for the channel's latest video
                 search_url = f"https://www.youtube.com/channel/{chan_id}/videos"
                 print(f"--- [SCAN] CHECKING ID: {chan_id} ---", flush=True)
                 
+                # We add --javascript-delay and force the player client
                 base_args = [
                     "--no-check-certificate", 
                     "--extractor-args", "youtube:player_client=web",
-                    "--flat-playlist",
-                    "--print", "id"
+                    "--allow-unplayable-formats",
+                    "--javascript-delay", "5"
                 ]
                 
                 if COOKIES_FILE.exists():
                     base_args.extend(["--cookies", str(COOKIES_FILE)])
 
-                # We use --playlist-items 1 to just get the very top video
-                id_cmd = ["yt-dlp"] + base_args + ["--playlist-items", "1", search_url]
+                # 1. Get Video ID
+                id_cmd = ["yt-dlp"] + base_args + ["--flat-playlist", "--print", "id", "--playlist-items", "1", search_url]
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
-                vid = res.stdout.strip().split('\n')[0] # Get only the first line
+                vid = res.stdout.strip().split('\n')[0]
 
                 print(f"DEBUG: Found Video ID: '{vid}'", flush=True)
 
-                if vid and len(vid) < 15: # Valid YouTube IDs are 11 chars
+                if vid and len(vid) == 11:
                     if vid not in processed or os.getenv('FORCE_ALL') == 'True':
                         print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                         output = str(AUDIO_DIR / "audio.wav")
                         
-                        dl_cmd = ["yt-dlp", "--no-check-certificate", "--extractor-args", "youtube:player_client=web"]
-                        if COOKIES_FILE.exists():
-                            dl_cmd.extend(["--cookies", str(COOKIES_FILE)])
-                        
-                        dl_cmd.extend([
+                        # 2. Download - added 'bestaudio' fallback to ensure it finds a stream
+                        dl_cmd = ["yt-dlp"] + base_args + [
                             "-x", "--audio-format", "wav",
-                            "-f", "ba/worst", "-o", output, 
+                            "-f", "bestaudio/ba/worst", # Tries best, then any audio, then worst
+                            "-o", output, 
                             f"https://youtube.com/watch?v={vid}"
-                        ])
+                        ]
                         
-                        if subprocess.run(dl_cmd).returncode == 0:
+                        result = subprocess.run(dl_cmd)
+                        
+                        if result.returncode == 0:
                             print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
                             api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                             
@@ -84,6 +84,8 @@ def run_scout():
                                 with open(PROCESSED_FILE, "w") as f:
                                     json.dump(processed, f)
                             print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
+                        else:
+                            print(f"--- [ERROR] DOWNLOAD FAILED FOR {vid} ---", flush=True)
                 else:
                     print(f"--- [SKIP] No valid ID found for {chan_id} ---", flush=True)
                 
