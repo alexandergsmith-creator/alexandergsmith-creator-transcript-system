@@ -13,7 +13,7 @@ os.environ['KAGGLE_KEY'] = "153ff4001bd116d721e522e19255d204"
 
 try:
     from kaggle.api.kaggle_api_extended import KaggleApi
-    print("--- [BOOT] HIGH-FIDELITY MODE ---", flush=True)
+    print("--- [BOOT] HQ ENGINE ACTIVATED ---", flush=True)
 except Exception as e:
     print(f"--- [CRASH] {e} ---", flush=True)
     sys.exit(1)
@@ -23,9 +23,6 @@ PROCESSED_FILE = Path("processed.json")
 COOKIES_FILE = Path("cookies.txt")
 AUDIO_DIR = Path("audio")
 AUDIO_DIR.mkdir(exist_ok=True)
-
-def get_upload_playlist_id(chan_id):
-    return 'UU' + chan_id[2:] if chan_id.startswith('UC') else chan_id
 
 def run_scout():
     api = KaggleApi()
@@ -37,11 +34,13 @@ def run_scout():
             channels = json.load(open(CHANNELS_FILE))
 
             for chan_id in channels:
-                upload_id = get_upload_playlist_id(chan_id)
+                # Target the uploads playlist directly
+                upload_id = 'UU' + chan_id[2:] if chan_id.startswith('UC') else chan_id
+                playlist_url = f"https://www.youtube.com/playlist?list={upload_id}"
+                
                 print(f"--- [SCAN] QUALITY CHECK: {chan_id} ---", flush=True)
                 
-                # Fetching IDs
-                id_cmd = ["yt-dlp", "--get-id", "--flat-playlist", f"https://www.youtube.com/playlist?list={upload_id}"]
+                id_cmd = ["yt-dlp", "--get-id", "--flat-playlist", playlist_url]
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
                 video_ids = res.stdout.strip().split('\n')
 
@@ -50,16 +49,16 @@ def run_scout():
                         print(f"--- [HQ DOWNLOAD] {vid} ---", flush=True)
                         output = str(AUDIO_DIR / f"{vid}.wav")
                         
-                        # --- THE BEST QUALITY COMMAND ---
+                        # --- THE HQ BYPASS COMMAND ---
                         dl_cmd = [
                             "yt-dlp",
                             "-x", "--audio-format", "wav",
-                            "--audio-quality", "0", # Highest quality conversion
+                            "--audio-quality", "0", 
                             "--no-check-certificate",
-                            "--prefer-free-formats",
-                            # Use web_creator for best audio access
-                            "--extractor-args", "youtube:player_client=web_creator,web",
-                            "-f", "bestaudio", # FORCE the highest quality audio stream
+                            # 'tv' client doesn't use the 'n' challenge as much
+                            # 'web_creator' gets us the highest bitrate possible
+                            "--extractor-args", "youtube:player_client=tv,web_creator",
+                            "-f", "bestaudio[ext=m4a]/bestaudio", # Prefer high-bitrate M4A/Opus
                             "-o", output,
                             f"https://youtube.com/watch?v={vid}"
                         ]
@@ -67,18 +66,18 @@ def run_scout():
                         if COOKIES_FILE.exists():
                             dl_cmd.extend(["--cookies", str(COOKIES_FILE)])
                         
-                        # Execute
-                        if subprocess.run(dl_cmd).returncode == 0:
-                            print(f"--- [KAGGLE] UPLOADING HQ AUDIO ---", flush=True)
+                        result = subprocess.run(dl_cmd)
+                        
+                        if result.returncode == 0:
+                            print(f"--- [KAGGLE] PUSHING HQ: {vid} ---", flush=True)
                             api.dataset_create_version(str(AUDIO_DIR), version_notes=f"HQ ID: {vid}", dir_mode='zip')
-                            
-                            # Clean up local file to save space
                             if os.path.exists(output): os.remove(output)
                             
                             processed.append(vid)
                             with open(PROCESSED_FILE, "w") as f: json.dump(processed, f)
-                            
-                            time.sleep(random.randint(45, 90)) # Long sleep for HQ downloads
+                            time.sleep(random.randint(30, 60))
+                        else:
+                            print(f"--- [SKIP] CHALLENGE FAILED FOR {vid} ---", flush=True)
                 
             time.sleep(14400)
         except Exception as e:
