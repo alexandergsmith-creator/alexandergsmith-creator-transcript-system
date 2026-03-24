@@ -7,7 +7,6 @@ import subprocess
 import random
 from pathlib import Path
 
-# --- [CREDENTIALS] ---
 os.environ['KAGGLE_USERNAME'] = "alexandergordonsmith"
 os.environ['KAGGLE_KEY'] = "153ff4001bd116d721e522e19255d204"
 
@@ -18,7 +17,6 @@ except Exception as e:
     print(f"--- [CRASH] IMPORT ERROR: {e} ---", flush=True)
     sys.exit(1)
 
-# --- [CONFIG] ---
 CHANNELS_FILE = Path("channels.json")
 PROCESSED_FILE = Path("processed.json")
 COOKIES_FILE = Path("cookies.txt")
@@ -40,46 +38,56 @@ def run_scout():
             with open(CHANNELS_FILE) as f:
                 channels = json.load(f)
 
-            for channel in channels:
-                print(f"--- [SCAN] CHECKING: {channel} ---", flush=True)
+            for chan_id in channels:
+                # Construct the direct URL for the channel's latest video
+                search_url = f"https://www.youtube.com/channel/{chan_id}/videos"
+                print(f"--- [SCAN] CHECKING ID: {chan_id} ---", flush=True)
                 
-                # Base args for yt-dlp
-                base_args = ["--no-check-certificate", "--extractor-args", "youtube:player_client=web", "--quiet", "--no-warnings"]
+                base_args = [
+                    "--no-check-certificate", 
+                    "--extractor-args", "youtube:player_client=web",
+                    "--flat-playlist",
+                    "--print", "id"
+                ]
+                
                 if COOKIES_FILE.exists():
                     base_args.extend(["--cookies", str(COOKIES_FILE)])
 
-                # Get Video ID - specifically looking for the latest video
-                id_cmd = ["yt-dlp"] + base_args + ["--get-id", "--playlist-end", "1", f"{channel}/videos"]
+                # We use --playlist-items 1 to just get the very top video
+                id_cmd = ["yt-dlp"] + base_args + ["--playlist-items", "1", search_url]
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
-                vid = res.stdout.strip()
+                vid = res.stdout.strip().split('\n')[0] # Get only the first line
 
                 print(f"DEBUG: Found Video ID: '{vid}'", flush=True)
 
-                if vid and (vid not in processed or os.getenv('FORCE_ALL') == 'True'):
-                    print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
-                    output = str(AUDIO_DIR / "audio.wav")
-                    
-                    dl_cmd = ["yt-dlp"] + base_args + [
-                        "-x", "--audio-format", "wav",
-                        "-f", "ba/worst", 
-                        "-o", output, 
-                        f"https://youtube.com/watch?v={vid}"
-                    ]
-                    
-                    if subprocess.run(dl_cmd).returncode == 0:
-                        print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
-                        api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
+                if vid and len(vid) < 15: # Valid YouTube IDs are 11 chars
+                    if vid not in processed or os.getenv('FORCE_ALL') == 'True':
+                        print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
+                        output = str(AUDIO_DIR / "audio.wav")
                         
-                        if vid not in processed:
-                            processed.append(vid)
-                            with open(PROCESSED_FILE, "w") as f:
-                                json.dump(processed, f)
-                        print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
+                        dl_cmd = ["yt-dlp", "--no-check-certificate", "--extractor-args", "youtube:player_client=web"]
+                        if COOKIES_FILE.exists():
+                            dl_cmd.extend(["--cookies", str(COOKIES_FILE)])
+                        
+                        dl_cmd.extend([
+                            "-x", "--audio-format", "wav",
+                            "-f", "ba/worst", "-o", output, 
+                            f"https://youtube.com/watch?v={vid}"
+                        ])
+                        
+                        if subprocess.run(dl_cmd).returncode == 0:
+                            print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
+                            api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
+                            
+                            if vid not in processed:
+                                processed.append(vid)
+                                with open(PROCESSED_FILE, "w") as f:
+                                    json.dump(processed, f)
+                            print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
                 else:
-                    reason = "Already processed" if vid in processed else "No ID found"
-                    print(f"--- [SKIP] {vid} ({reason}) ---", flush=True)
+                    print(f"--- [SKIP] No valid ID found for {chan_id} ---", flush=True)
                 
-                time.sleep(random.randint(5, 10))
+                time.sleep(random.randint(10, 20))
 
             print("--- [SLEEP] CYCLE FINISHED ---", flush=True)
             time.sleep(14400)
