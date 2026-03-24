@@ -43,14 +43,11 @@ def run_scout():
             for channel in channels:
                 print(f"--- [SCAN] CHECKING: {channel} ---", flush=True)
                 
-                # These flags tell yt-dlp to use the JavaScript engine (Node.js) 
-                # and the web player to bypass the 'n challenge'
-                base_args = [
-                    "--cookies", str(COOKIES_FILE),
-                    "--no-check-certificate",
-                    "--extractor-args", "youtube:player_client=web",
-                    "--allow-unplayable-formats"
-                ]
+                # Setup arguments for the JavaScript solver
+                base_args = ["--no-check-certificate", "--extractor-args", "youtube:player_client=web"]
+                
+                if COOKIES_FILE.exists():
+                    base_args.extend(["--cookies", str(COOKIES_FILE)])
 
                 # Get Video ID
                 id_cmd = ["yt-dlp"] + base_args + ["--get-id", "--playlist-end", "1", channel]
@@ -61,7 +58,7 @@ def run_scout():
                     print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                     output = str(AUDIO_DIR / "audio.wav")
                     
-                    # Force basic format to avoid high-encryption blocks
+                    # Force basic audio format to ensure success
                     dl_cmd = ["yt-dlp"] + base_args + [
                         "-x", "--audio-format", "wav",
                         "-f", "ba/worst", 
@@ -71,6 +68,7 @@ def run_scout():
                     
                     if subprocess.run(dl_cmd).returncode == 0:
                         print(f"--- [UPLOAD] PUSHING TO KAGGLE ---", flush=True)
+                        # Create version on Kaggle
                         api.dataset_create_version(str(AUDIO_DIR), version_notes=f"ID: {vid}", dir_mode='zip')
                         
                         if vid not in processed:
@@ -79,7 +77,7 @@ def run_scout():
                                 json.dump(processed, f)
                         print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
                 else:
-                    print(f"--- [SKIP/FAIL] {vid} check logs ---", flush=True)
+                    print(f"--- [SKIP] {vid} already handled or not found ---", flush=True)
                 
                 time.sleep(random.randint(20, 45))
 
