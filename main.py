@@ -39,10 +39,20 @@ def run_scout():
                 channels = json.load(f)
 
             for chan_id in channels:
-                rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={chan_id}"
-                print(f"--- [SCAN] CHECKING RSS FOR: {chan_id} ---", flush=True)
+                # Direct Search is often more reliable than RSS for big channels
+                search_query = f"https://www.youtube.com/channel/{chan_id}/videos"
+                print(f"--- [SCAN] SEARCHING FOR: {chan_id} ---", flush=True)
                 
-                id_cmd = ["yt-dlp", "--get-id", "--playlist-end", "1", "--no-check-certificate", rss_url]
+                # Force the android/ios client even for the ID lookup
+                id_cmd = [
+                    "yt-dlp", "--get-id", "--playlist-end", "1",
+                    "--extractor-args", "youtube:player_client=android,ios",
+                    "--no-check-certificate", search_query
+                ]
+                
+                if COOKIES_FILE.exists():
+                    id_cmd.extend(["--cookies", str(COOKIES_FILE)])
+
                 res = subprocess.run(id_cmd, capture_output=True, text=True)
                 vid = res.stdout.strip().split('\n')[0]
 
@@ -53,14 +63,11 @@ def run_scout():
                         print(f"--- [NEW] FOUND: {vid}. DOWNLOADING... ---", flush=True)
                         output = str(AUDIO_DIR / "audio.wav")
                         
-                        # Use the Android/iOS clients to bypass the JavaScript challenge
                         dl_cmd = [
-                            "yt-dlp",
-                            "-x", "--audio-format", "wav",
+                            "yt-dlp", "-x", "--audio-format", "wav",
                             "--no-check-certificate",
                             "--extractor-args", "youtube:player_client=android,ios", 
-                            "-f", "ba/worst",
-                            "-o", output,
+                            "-f", "ba/worst", "-o", output,
                             f"https://youtube.com/watch?v={vid}"
                         ]
                         
@@ -76,8 +83,6 @@ def run_scout():
                                 with open(PROCESSED_FILE, "w") as f:
                                     json.dump(processed, f)
                             print(f"--- [SUCCESS] {vid} COMPLETE ---", flush=True)
-                        else:
-                            print(f"--- [ERROR] DOWNLOAD FAILED FOR {vid} ---", flush=True)
                 
                 time.sleep(random.randint(10, 20))
 
