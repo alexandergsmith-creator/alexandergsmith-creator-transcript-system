@@ -1,59 +1,63 @@
 import subprocess
 import os
 import static_ffmpeg
+import json
 
-def download_youtube_audio(video_url):
-    # 1. Initialize static-ffmpeg to get the paths to the binaries
-    # This ensures Railway knows where ffmpeg is hiding
+def process_youtube_to_kaggle(target_url):
+    # 1. Setup Environment
     static_ffmpeg.add_paths()
-    
-    # 2. Define the output filename template
-    output_template = "downloads/%(title)s.%(ext)s"
-    
-    # 3. Ensure the downloads directory exists
     if not os.path.exists("downloads"):
         os.makedirs("downloads")
 
-    # 4. The full dl_cmd list:
+    # 2. Download from YouTube
     dl_cmd = [
         "yt-dlp",
         "--cookies", "cookies.txt",
         "--no-check-certificate",
-        "-x",                                # Extract audio
-        "--audio-format", "wav",             # Convert to WAV
-        "--audio-quality", "0",              # Best quality
-        
-        # Security & Bot Bypassing
+        "-x",
+        "--audio-format", "wav",
+        "--audio-quality", "0",
         "--remote-components", "ejs:github",
         "--js-runtime", "node",
         "--extractor-args", "youtube:player_client=web,tv", 
-        
-        # Audio Selection
         "-f", "bestaudio/best",
-        
-        # Output location
-        "-o", output_template,
-        
-        # THE FIX: Tell yt-dlp to use the static-ffmpeg we just initialized
         "--prefer-ffmpeg",
-        
-        video_url
+        "--playlist-end", "5", 
+        "-o", "downloads/%(title)s.%(ext)s",
+        target_url
     ]
 
+    print(f"--- Harvesting Audio: {target_url} ---")
+    subprocess.run(dl_cmd, check=True)
+
+    # 3. Push to Kaggle
+    # Create a simple metadata file Kaggle requires
+    dataset_metadata = {
+        "title": "YouTube Audio Harvest",
+        "id": f"{os.environ.get('KAGGLE_USERNAME')}/youtube-audio-harvest",
+        "licenses": [{"name": "CC0-1.0"}]
+    }
+    
+    with open("downloads/dataset-metadata.json", "w") as f:
+        json.dump(dataset_metadata, f)
+
+    print("--- Pushing to Kaggle Dataset ---")
+    # This command creates the dataset if it's new, or updates it if it exists
+    # It uses the API credentials you set in Railway Variables
     try:
-        print(f"--- Starting Download: {video_url} ---")
-        # Run the command
-        result = subprocess.run(dl_cmd, check=True, capture_output=True, text=True)
-        print("Success!")
-        print(result.stdout)
+        # Check if dataset exists, if not, create it; otherwise, version it.
+        status = subprocess.run(["kaggle", "datasets", "status", dataset_metadata["id"]], capture_output=True)
         
-        # List files to prove it downloaded
-        print("Files in downloads folder:", os.listdir("downloads"))
+        if status.returncode != 0:
+            subprocess.run(["kaggle", "datasets", "create", "-p", "downloads", "--dir-mode", "zip"], check=True)
+        else:
+            subprocess.run(["kaggle", "datasets", "version", "-p", "downloads", "-m", "New harvest", "--dir-mode", "zip"], check=True)
         
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: Download failed for {video_url}")
-        print(e.stderr)
+        print("Success! Audio is now available in Kaggle.")
+    except Exception as e:
+        print(f"Kaggle Push Error: {e}")
 
 if __name__ == "__main__":
-    target_url = "https://www.youtube.com/watch?v=JFtlf8RoPZY"
-    download_youtube_audio(target_url)
+    # The "The Rest" part: Point this at a channel
+    target = "https://www.youtube.com/watch?v=JFtlf8RoPZY"
+    process_youtube_to_kaggle(target)
