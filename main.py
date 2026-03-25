@@ -17,13 +17,6 @@ ARCHIVE_FILE = "archive.txt"
 FAILURE_LOG = "failed.txt"
 SEGMENT_TIME = 600 
 
-# Rotating User Agents to stay invisible
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-]
-
 def log(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
@@ -39,7 +32,7 @@ def setup_kaggle():
 def harvest_video(url, api):
     log(f"🎯 Targeting: {url}")
     
-    # We remove --cookies since they are invalid and triggering security flags
+    # STEALTH COMMAND: No cookies (they are dead), just pure spoofing
     download_cmd = [
         "yt-dlp",
         "-x", "--audio-format", "wav",
@@ -50,10 +43,11 @@ def harvest_video(url, api):
         "--break-on-existing",
         "--ignore-errors",
         "--no-warnings",
-        "--sleep-requests", "5",         # Sleep between metadata calls
-        "--sleep-interval", "30",        # HEAVY sleep to cool down the IP
+        "--add-header", "Accept-Language:en-US,en;q=0.9",
+        "--extractor-args", "youtube:player_client=android,web", # Force specific clients
+        "--sleep-interval", "30",        # Mandatory wait to cool the IP
         "--max-sleep-interval", "90",
-        "--user-agent", random.choice(USER_AGENTS)
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ]
 
     download_cmd.append(url)
@@ -71,7 +65,7 @@ def harvest_video(url, api):
         log("✅ Success.")
         
     except Exception as e:
-        log(f"❌ Blocked: {e}")
+        log(f"❌ Blocked/Failed: {e}")
         with open(FAILURE_LOG, "a") as f: f.write(f"{url}\n")
     finally:
         if os.path.exists("temp_audio.wav"): os.remove("temp_audio.wav")
@@ -84,13 +78,16 @@ def main():
     with open(CHANNELS_JSON, "r") as f:
         cids = json.load(f)
     
-    # Mix up the order so we aren't hitting the same channel hundreds of times in a row
+    # Shuffle to avoid hammering one specific channel
     random.shuffle(cids) 
     
     for cid in cids:
-        # Just grab the 2 newest videos per run to avoid 429 ban
-        url = f"https://www.youtube.com/channel/{cid}/videos"
-        harvest_video(f"{url}", api)
+        # Check both videos and shorts, but shuffle them
+        types = ["videos", "shorts"]
+        random.shuffle(types)
+        for t in types:
+            url = f"https://www.youtube.com/channel/{cid}/{t}"
+            harvest_video(url, api)
 
 if __name__ == "__main__":
     main()
