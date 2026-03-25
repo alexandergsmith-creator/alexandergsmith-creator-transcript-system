@@ -2,41 +2,47 @@ import subprocess
 import os
 
 def download_youtube_audio(video_url):
-    # 1. Define the output filename
-    # %(title)s will be replaced by the actual video title
+    # 1. Define the output filename template
+    # This saves files into a 'downloads' folder with the video title
     output_template = "downloads/%(title)s.%(ext)s"
     
-    # 2. Ensure the downloads directory exists
+    # 2. Ensure the downloads directory exists in the Railway container
     if not os.path.exists("downloads"):
         os.makedirs("downloads")
 
-    # 3. The dl_cmd: These are the exact flags that worked in your terminal
+    # 3. The full dl_cmd list:
+    # This is what Python sends to the terminal to talk to yt-dlp
     dl_cmd = [
         "yt-dlp",
-        "--cookies", "cookies.txt",         # Uses your exported login session
-        "--no-check-certificate",            # Bypasses the SSL trust issue
-        "--prefer-free-formats",
+        "--cookies", "cookies.txt",         # Proves you are a logged-in user
+        "--no-check-certificate",            # Bypasses SSL trust issues on Linux
         "-x",                                # Extract audio only
-        "--audio-format", "wav",             # Convert specifically to WAV
-        "--audio-quality", "0",              # 0 = highest quality conversion
-        "--extractor-args", "youtube:player_client=web,tv", # Force trusted clients
-        "-f", "bestaudio/best",              # Pick the best from the list we saw
-        "-o", output_template,               # Save to the downloads folder
+        "--audio-format", "wav",             # Convert the result to WAV
+        "--audio-quality", "0",              # Highest quality conversion (VBR 0)
+        
+        # FIX: Tell yt-dlp to use the Node.js runtime to solve YouTube's 'n' challenge
+        "--js-runtime", "node", 
+        
+        # FIX: Use multiple clients to find the best available audio streams
+        "--extractor-args", "youtube:player_client=ios,web,tv", 
+        
+        "-f", "bestaudio/best",              # Automatically pick the highest bitrate
+        "-o", output_template,               # Set the output path and filename
         video_url
     ]
 
     try:
         print(f"--- Starting Download: {video_url} ---")
-        # subprocess.run executes the command just like you did in the terminal
+        # Run the command and wait for it to finish
         result = subprocess.run(dl_cmd, check=True, capture_output=True, text=True)
         print("Success!")
         print(result.stdout)
     except subprocess.CalledProcessError as e:
         print(f"ERROR: Download failed for {video_url}")
+        # This prints the specific error from yt-dlp so we can debug it
         print(e.stderr)
 
-# Example Usage:
 if __name__ == "__main__":
-    # You can replace this with your target URL or a list of URLs
-    test_url = "https://www.youtube.com/watch?v=JFtlf8RoPZY"
-    download_youtube_audio(test_url)
+    # Target URL - you can change this to a channel link later
+    target_url = "https://www.youtube.com/watch?v=JFtlf8RoPZY"
+    download_youtube_audio(target_url)
