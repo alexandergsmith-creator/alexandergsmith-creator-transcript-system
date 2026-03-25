@@ -1,5 +1,3 @@
 yt-dlp
 kaggle
-requests
 static-ffmpeg
-py-js-extract
