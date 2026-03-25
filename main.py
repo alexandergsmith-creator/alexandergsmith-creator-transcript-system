@@ -1,46 +1,66 @@
 import os
+import json
 import subprocess
 import shutil
 import time
+from datetime import datetime
 from kaggle.api.kaggle_api_extended import KaggleApi
 
-# --- CONFIGURATION FROM RAILWAY VARIABLES ---
-# Make sure these are set in your Railway 'Variables' tab!
+# --- CONFIGURATION (RAILWAY ENVIRONMENT) ---
 KAGGLE_USERNAME = os.getenv('KAGGLE_USERNAME')
 KAGGLE_KEY = os.getenv('KAGGLE_KEY')
 DATASET_ID = os.getenv('KAGGLE_DATASET', 'alexandergordonsmith/youtube-jobs')
 
-# Internal tracking files
-CHANNELS_FILE = "channels.txt"
+# Files/Paths
+CHANNELS_JSON = "channels.json"
 ARCHIVE_FILE = "archive.txt"
 FAILURE_LOG = "failed.txt"
 SEGMENT_TIME = 600  # 10 minute chunks
 
+def log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
+
 def setup_kaggle():
-    """Authenticates using Railway Environment Variables."""
     if not KAGGLE_USERNAME or not KAGGLE_KEY:
-        print("❌ Error: KAGGLE_USERNAME or KAGGLE_KEY not found in Railway Variables!")
+        log("❌ CRITICAL: KAGGLE_USERNAME or KAGGLE_KEY missing in Railway Variables.")
         return None
     
-    # Kaggle library looks for these specific environment variables
     os.environ['KAGGLE_USERNAME'] = KAGGLE_USERNAME
     os.environ['KAGGLE_KEY'] = KAGGLE_KEY
     
     api = KaggleApi()
     try:
         api.authenticate()
-        print(f"✅ Authenticated as {KAGGLE_USERNAME}")
+        log(f"✅ Authenticated as {KAGGLE_USERNAME}")
         return api
     except Exception as e:
-        print(f"❌ Kaggle Auth Failed: {e}")
+        log(f"❌ Kaggle Auth Failed: {e}")
         return None
 
-def harvest_video(url, api):
-    """Processes one video: Download -> Slice -> Upload -> Delete."""
-    print(f"\n--- Processing: {url} ---")
+def get_target_urls():
+    if not os.path.exists(CHANNELS_JSON):
+        log(f"❌ {CHANNELS_JSON} not found in repository.")
+        return []
     
-    # 1. DOWNLOAD (Audio only, newest first, including shorts)
-    # We use low-bitrate to save Railway disk space and credits
+    try:
+        with open(CHANNELS_JSON, "r") as f:
+            channel_ids = json.load(f)
+        
+        targets = []
+        for cid in channel_ids:
+            # Full Unload: Main Videos + Shorts
+            targets.append(f"https://www.youtube.com/channel/{cid}/videos")
+            targets.append(f"https://www.youtube.com/channel/@{cid}/shorts")
+        return targets
+    except Exception as e:
+        log(f"❌ JSON Parsing Error: {e}")
+        return []
+
+def harvest_video(url, api):
+    log(f"🎯 Targeting: {url}")
+    
+    # yt-dlp config: Low bitrate to save Railway Disk (1GB Limit)
     download_cmd = [
         "yt-dlp",
         "-x", "--audio-format", "wav",
@@ -48,18 +68,23 @@ def harvest_video(url, api):
         "--download-archive", ARCHIVE_FILE,
         "--output", "temp_audio.%(ext)s",
         "--no-playlist",
+        "--break-on-existing", 
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         url
     ]
     
     try:
+        # 1. Download
         subprocess.run(download_cmd, check=True)
         if not os.path.exists("temp_audio.wav"):
-            print("⏭️ Video already archived or skipped.")
+            log("⏭️ Video skipped (already in archive).")
             return
 
-        # 2. SLICE (10-minute segments for parallel processing)
-        print("🔪 Slicing audio...")
+        # 2. Slice
+        log("🔪 Slicing for Parallel Whisper processing...")
+        if os.path.exists("chunks"): shutil.rmtree("chunks")
         os.makedirs("chunks", exist_ok=True)
+        
         slice_cmd = [
             "ffmpeg", "-i", "temp_audio.wav",
             "-f", "segment", "-segment_time", str(SEGMENT_TIME),
@@ -67,56 +92,43 @@ def harvest_video(url, api):
         ]
         subprocess.run(slice_cmd, check=True)
 
-        # 3. UPLOAD TO KAGGLE
-        print(f"📤 Uploading chunks to {DATASET_ID}...")
+        # 3. Upload
+        log(f"📤 Pushing to Kaggle Dataset: {DATASET_ID}")
         api.dataset_create_version(
             DATASET_ID, 
-            f"Automated Update: {time.strftime('%Y-%m-%d %H:%M:%S')}", 
+            f"Archive Sync: {datetime.now().strftime('%Y-%m-%d %H:%M')}", 
             dir_mode='zip'
         )
-        print("✅ Upload Successful!")
+        log("✨ Harvest Successful.")
 
     except Exception as e:
-        print(f"⚠️ Failed to process {url}: {e}")
+        log(f"⚠️ Failed: {e}")
         with open(FAILURE_LOG, "a") as f:
             f.write(f"{url}\n")
     
     finally:
-        # 4. PURGE (The 'One-In, One-Out' rule to stay under 1GB)
-        if os.path.exists("temp_audio.wav"):
-            os.remove("temp_audio.wav")
-        if os.path.isdir("chunks"):
-            shutil.rmtree("chunks")
-        print("🧹 Cleaned up Railway storage.")
+        # THE PURGE: Absolute Storage Safety
+        if os.path.exists("temp_audio.wav"): os.remove("temp_audio.wav")
+        if os.path.isdir("chunks"): shutil.rmtree("chunks")
+        log("🧹 Storage wiped.")
 
 def main():
     api = setup_kaggle()
-    if not api:
-        return
+    if not api: return
 
-    # Load your 50 channels from the file in your repo
-    if not os.path.exists(CHANNELS_FILE):
-        print(f"❌ {CHANNELS_FILE} not found! Create it in your repo.")
-        return
+    targets = get_target_urls()
+    if not targets: return
 
-    with open(CHANNELS_FILE, "r") as f:
-        channels = [line.strip() for line in f if line.strip()]
+    # Primary Crawl
+    for url in targets:
+        harvest_video(url, api)
 
-    # PHASE 1: Full Unload (Newest to Oldest)
-    for channel_url in channels:
-        print(f"\n📺 Entering Channel: {channel_url}")
-        # Passing the channel URL to harvest_video will trigger newest-first logic
-        harvest_video(channel_url, api)
-
-    # PHASE 2: Retry Failures
+    # Cleanup: Retry the failed list one last time
     if os.path.exists(FAILURE_LOG):
-        print("\n🔄 Retrying failed videos...")
+        log("🔄 Retrying failed links...")
         with open(FAILURE_LOG, "r") as f:
             failed_urls = f.readlines()
-        
-        # Clear log for this run
         open(FAILURE_LOG, 'w').close() 
-        
         for url in failed_urls:
             harvest_video(url.strip(), api)
 
