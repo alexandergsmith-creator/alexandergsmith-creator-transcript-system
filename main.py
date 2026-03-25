@@ -1,50 +1,59 @@
 import subprocess
 import os
+import static_ffmpeg
 
 def download_youtube_audio(video_url):
-    # 1. Define the output filename template
+    # 1. Initialize static-ffmpeg to get the paths to the binaries
+    # This ensures Railway knows where ffmpeg is hiding
+    static_ffmpeg.add_paths()
+    
+    # 2. Define the output filename template
     output_template = "downloads/%(title)s.%(ext)s"
     
-    # 2. Ensure the downloads directory exists
+    # 3. Ensure the downloads directory exists
     if not os.path.exists("downloads"):
         os.makedirs("downloads")
 
-    # 3. The full dl_cmd list:
-    # This version includes the fixes from your Railway logs
+    # 4. The full dl_cmd list:
     dl_cmd = [
         "yt-dlp",
-        "--cookies", "cookies.txt",         # Authentication
-        "--no-check-certificate",            # SSL Bypass
+        "--cookies", "cookies.txt",
+        "--no-check-certificate",
         "-x",                                # Extract audio
         "--audio-format", "wav",             # Convert to WAV
         "--audio-quality", "0",              # Best quality
         
-        # FIX 1: Allow yt-dlp to download the 'ejs' solver from GitHub (Required for Railway)
+        # Security & Bot Bypassing
         "--remote-components", "ejs:github",
-        
-        # FIX 2: Explicitly use Node.js and tell it to use 'web' first for cookies
         "--js-runtime", "node",
         "--extractor-args", "youtube:player_client=web,tv", 
         
-        # FIX 3: Fallback logic - try to get best audio, but don't crash if it's tricky
-        "-f", "ba/b",
+        # Audio Selection
+        "-f", "bestaudio/best",
         
+        # Output location
         "-o", output_template,
+        
+        # THE FIX: Tell yt-dlp to use the static-ffmpeg we just initialized
+        "--prefer-ffmpeg",
+        
         video_url
     ]
 
     try:
         print(f"--- Starting Download: {video_url} ---")
-        # subprocess.run executes the command
+        # Run the command
         result = subprocess.run(dl_cmd, check=True, capture_output=True, text=True)
         print("Success!")
         print(result.stdout)
+        
+        # List files to prove it downloaded
+        print("Files in downloads folder:", os.listdir("downloads"))
+        
     except subprocess.CalledProcessError as e:
         print(f"ERROR: Download failed for {video_url}")
-        # This will show the new log if it still fails
         print(e.stderr)
 
 if __name__ == "__main__":
-    # Your target video
     target_url = "https://www.youtube.com/watch?v=JFtlf8RoPZY"
     download_youtube_audio(target_url)
