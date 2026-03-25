@@ -4,12 +4,12 @@ import static_ffmpeg
 import json
 
 def process_youtube_to_kaggle(target_url):
-    # 1. Setup Environment
+    # 1. Initialize FFmpeg and Folders
     static_ffmpeg.add_paths()
     if not os.path.exists("downloads"):
         os.makedirs("downloads")
 
-    # 2. Download from YouTube
+    # 2. The Cleaned-Up Download Command
     dl_cmd = [
         "yt-dlp",
         "--cookies", "cookies.txt",
@@ -19,45 +19,59 @@ def process_youtube_to_kaggle(target_url):
         "--audio-quality", "0",
         "--remote-components", "ejs:github",
         "--js-runtime", "node",
-        "--extractor-args", "youtube:player_client=web,tv", 
+        
+        # Mimic a real desktop browser
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "--extractor-args", "youtube:player_client=web;player_skip=configs,web_embedded_client",
+        
+        # Quality and Automation
         "-f", "bestaudio/best",
-        "--prefer-ffmpeg",
-        "--playlist-end", "5", 
+        "--playlist-end", "2", 
+        "--download-archive", "archive.txt",
         "-o", "downloads/%(title)s.%(ext)s",
+        
         target_url
     ]
 
-    print(f"--- Harvesting Audio: {target_url} ---")
-    subprocess.run(dl_cmd, check=True)
-
-    # 3. Push to Kaggle
-    # Create a simple metadata file Kaggle requires
-    dataset_metadata = {
-        "title": "YouTube Audio Harvest",
-        "id": f"{os.environ.get('KAGGLE_USERNAME')}/youtube-audio-harvest",
-        "licenses": [{"name": "CC0-1.0"}]
-    }
-    
-    with open("downloads/dataset-metadata.json", "w") as f:
-        json.dump(dataset_metadata, f)
-
-    print("--- Pushing to Kaggle Dataset ---")
-    # This command creates the dataset if it's new, or updates it if it exists
-    # It uses the API credentials you set in Railway Variables
     try:
-        # Check if dataset exists, if not, create it; otherwise, version it.
-        status = subprocess.run(["kaggle", "datasets", "status", dataset_metadata["id"]], capture_output=True)
+        print(f"--- Starting Harvest: {target_url} ---")
+        subprocess.run(dl_cmd, check=True)
+
+        # 3. Kaggle API Push
+        # Verify KAGGLE_USERNAME and KAGGLE_KEY are in Railway Variables!
+        dataset_id = f"{os.environ.get('KAGGLE_USERNAME')}/youtube-audio-harvest"
+        
+        metadata = {
+            "title": "YouTube Audio Harvest",
+            "id": dataset_id,
+            "licenses": [{"name": "CC0-1.0"}]
+        }
+        
+        with open("downloads/dataset-metadata.json", "w") as f:
+            json.dump(metadata, f)
+
+        print(f"--- Pushing to Kaggle: {dataset_id} ---")
+        
+        # Check if dataset exists to decide between 'create' or 'version'
+        status = subprocess.run(["kaggle", "datasets", "status", dataset_id], capture_output=True)
         
         if status.returncode != 0:
             subprocess.run(["kaggle", "datasets", "create", "-p", "downloads", "--dir-mode", "zip"], check=True)
         else:
-            subprocess.run(["kaggle", "datasets", "version", "-p", "downloads", "-m", "New harvest", "--dir-mode", "zip"], check=True)
+            subprocess.run(["kaggle", "datasets", "version", "-p", "downloads", "-m", "New audio harvest", "--dir-mode", "zip"], check=True)
         
-        print("Success! Audio is now available in Kaggle.")
+        print("🚀 SUCCESS: Files are now in Kaggle.")
+
+        # 4. Clean up Railway disk space
+        for file in os.listdir("downloads"):
+            os.remove(os.path.join("downloads", file))
+
+    except subprocess.CalledProcessError as e:
+        print("❌ ERROR: YouTube blocked the session. Refresh cookies.txt and keep the YT tab open!")
     except Exception as e:
-        print(f"Kaggle Push Error: {e}")
+        print(f"❌ ERROR: {e}")
 
 if __name__ == "__main__":
-    # The "The Rest" part: Point this at a channel
+    # Point this to a channel when you're ready for 'The Rest'
     target = "https://www.youtube.com/watch?v=JFtlf8RoPZY"
     process_youtube_to_kaggle(target)
